@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Activity,
   Award,
@@ -24,6 +24,16 @@ import {
 } from "./game";
 
 type Tab = "buildings" | "upgrades";
+
+type CertificateEffect = {
+  id: number;
+  label: string;
+  offsetX: number;
+  offsetY: number;
+  originX: number;
+  originY: number;
+  kind: "click" | "burst";
+};
 
 type SaveState = {
   certificates: number;
@@ -68,6 +78,10 @@ function App() {
   const [tab, setTab] = useState<Tab>("buildings");
   const [notice, setNotice] = useState("RSA CA online. Issue some certificates.");
   const [lastTick, setLastTick] = useState(Date.now());
+  const [certificateEffects, setCertificateEffects] = useState<CertificateEffect[]>([]);
+  const jellyStageRef = useRef<HTMLDivElement>(null);
+  const productionRateRef = useRef(0);
+  const clickValueRef = useRef(1);
 
   const purchased = useMemo(
     () => new Set(state.upgrades),
@@ -100,6 +114,8 @@ function App() {
     );
 
   const productionPerSecond = baseProduction * productionMultiplier;
+  productionRateRef.current = productionPerSecond;
+  clickValueRef.current = clickValue;
   const harvestProgress = Math.min(state.elapsed / HARVEST_WINDOW, 1);
   const timeRemaining = Math.max(0, HARVEST_WINDOW - state.elapsed);
   const pqcUnlocked = purchased.has("pqcMigration");
@@ -151,6 +167,39 @@ function App() {
       clicks: current.clicks + 1,
     }));
   }, [clickValue]);
+
+  const emitCertificates = useCallback((count: number, kind: CertificateEffect["kind"], clickPoint?: { x: number; y: number }) => {
+    const amount = Math.max(1, Math.min(40, Math.ceil(count)));
+    const now = Date.now();
+    const stage = jellyStageRef.current;
+    const originX = clickPoint?.x ?? (stage?.clientWidth ?? 0) / 2;
+    const originY = clickPoint?.y ?? (stage?.clientHeight ?? 0) * 0.46;
+    const effects = Array.from({ length: amount }, (_, index) => ({
+      id: now + index + Math.random(),
+      label: kind === "click" && index === 0 ? `+${formatNumber(clickValueRef.current)}` : "▤",
+      offsetX: kind === "click" ? (index - (amount - 1) / 2) * 24 : Math.cos((2 * Math.PI * index) / amount) * 118,
+      offsetY: kind === "click" ? -42 : Math.sin((2 * Math.PI * index) / amount) * 118,
+      originX,
+      originY,
+      kind,
+    }));
+    setCertificateEffects((current) => [...current.slice(-100), ...effects]);
+    window.setTimeout(() => {
+      const ids = new Set(effects.map((effect) => effect.id));
+      setCertificateEffects((current) => current.filter((effect) => !ids.has(effect.id)));
+    }, 1300);
+  }, []);
+
+  useEffect(() => {
+    const interval = 30_000;
+    const timer = window.setInterval(() => {
+      const production = productionRateRef.current;
+      if (production > 0) {
+        emitCertificates(Math.floor(Math.log2(production)) + 1, "burst");
+      }
+    }, interval);
+    return () => window.clearInterval(timer);
+  }, [emitCertificates]);
 
   const buyBuilding = (id: BuildingId) => {
     const building = BUILDINGS.find((b) => b.id === id)!;
@@ -231,13 +280,20 @@ function App() {
             </div>
           </div>
 
-          <div className="jelly-stage">
+            <div className="jelly-stage" ref={jellyStageRef}>
             <div className="bubble b1" />
             <div className="bubble b2" />
             <div className="bubble b3" />
             <button
               className="jellyfish-button"
-              onClick={issueCertificate}
+              onClick={(event) => {
+                issueCertificate();
+                const stageBounds = event.currentTarget.parentElement!.getBoundingClientRect();
+                emitCertificates(1, "click", {
+                  x: event.clientX - stageBounds.left,
+                  y: event.clientY - stageBounds.top,
+                });
+              }}
               aria-label="Issue a certificate"
             >
               <div className="jelly-glow" />
@@ -248,6 +304,23 @@ function App() {
                 <i /><i /><i /><i /><i />
               </div>
             </button>
+            <div className="certificate-effects" aria-hidden="true">
+              {certificateEffects.map((effect) => (
+                <span
+                  className={`certificate-effect ${effect.kind}`}
+                  key={effect.id}
+                  style={{
+                    "--effect-x": `${effect.offsetX}px`,
+                    "--effect-y": `${effect.offsetY}px`,
+                    "--origin-x": `${effect.originX}px`,
+                    "--origin-y": `${effect.originY}px`,
+                  } as CSSProperties}
+                >
+                  <span className="certificate-icon">▤</span>
+                  {effect.kind === "click" && <strong>{effect.label}</strong>}
+                </span>
+              ))}
+            </div>
             <div className="click-hint">ISSUE CERTIFICATE</div>
             <div className="click-value">+{formatNumber(clickValue)}</div>
           </div>

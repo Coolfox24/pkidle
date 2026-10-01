@@ -58,6 +58,20 @@ button { font: inherit; color: inherit; }
 .jellyfish-button { position: relative; width: 260px; height: 290px; border: 0; background: transparent; cursor: pointer; z-index: 2;
   transition: transform .08s ease; }
 .jellyfish-button:active { transform: scale(.95); }
+.certificate-effects { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.certificate-effect { position: absolute; left: var(--origin-x); top: var(--origin-y); display: flex; align-items: center; gap: 5px;
+  color: #bafaf1; font: 500 12px "DM Mono", monospace; text-shadow: 0 2px 8px #03131c, 0 0 12px rgba(88, 241, 222, .55);
+  animation: certificate-float 1.25s cubic-bezier(.16,.72,.28,1) both; }
+.certificate-effect.click { color: #e2fffb; font-size: 14px; }
+.certificate-effect.burst { color: #8ce9e0; }
+.certificate-icon { font-size: 19px; line-height: 1; filter: drop-shadow(0 0 5px rgba(100, 240, 224, .75)); }
+.certificate-effect strong { font-size: 12px; white-space: nowrap; }
+@keyframes certificate-float {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.45); }
+  16% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--effect-x)), calc(-50% + var(--effect-y))) scale(1); }
+}
 .jelly-glow { position: absolute; inset: 20px 20px 55px; border-radius: 50% 50% 45% 45%;
   background: rgba(79, 225, 222, .13); filter: blur(25px); }
 .jelly-body { position: absolute; width: 210px; height: 145px; left: 25px; top: 30px;
