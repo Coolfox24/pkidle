@@ -4,7 +4,6 @@ import {
   Award,
   ChevronRight,
   CircleHelp,
-  FlaskConical,
   KeyRound,
   LockKeyhole,
   RotateCcw,
@@ -22,6 +21,8 @@ import {
   type BuildingId,
   type UpgradeId,
 } from "./game";
+import { PixelBuildingIcon, PixelCertificate, PixelJellyfish, PixelOperatorSprite, PixelUpgradeIcon } from "./PixelArt";
+import "./pkidle.css";
 
 type Tab = "buildings" | "upgrades";
 
@@ -34,6 +35,8 @@ type CertificateEffect = {
   originY: number;
   kind: "click" | "burst";
 };
+
+type OperatorVisit = { id: number; delay: number };
 
 type SaveState = {
   certificates: number;
@@ -73,12 +76,13 @@ function loadGame(): SaveState {
   }
 }
 
-function App() {
+export function PKIdle() {
   const [state, setState] = useState<SaveState>(loadGame);
   const [tab, setTab] = useState<Tab>("buildings");
   const [notice, setNotice] = useState("RSA CA online. Issue some certificates.");
   const [lastTick, setLastTick] = useState(Date.now());
   const [certificateEffects, setCertificateEffects] = useState<CertificateEffect[]>([]);
+  const [operatorVisits, setOperatorVisits] = useState<OperatorVisit[]>([]);
   const jellyStageRef = useRef<HTMLDivElement>(null);
   const productionRateRef = useRef(0);
   const clickValueRef = useRef(1);
@@ -91,19 +95,28 @@ function App() {
   const productionMultiplier = useMemo(() => {
     let multiplier = 1;
     for (const upgrade of UPGRADES) {
-      if (purchased.has(upgrade.id)) multiplier *= upgrade.multiplier ?? 1;
+      if (purchased.has(upgrade.id)) multiplier *= upgrade.multiplier ?? (1 + (upgrade.productionBonus ?? 0));
     }
     return multiplier;
   }, [purchased]);
+
+  const buildingProductionMultipliers = useMemo(
+    () => Object.fromEntries(BUILDINGS.map((building) => [
+      building.id,
+      UPGRADES.filter((upgrade) => upgrade.category === building.id && purchased.has(upgrade.id))
+        .reduce((multiplier, upgrade) => multiplier * (upgrade.buildingMultiplier ?? 1), 1),
+    ])) as Record<BuildingId, number>,
+    [purchased],
+  );
 
   const baseProduction = useMemo(
     () =>
       BUILDINGS.reduce(
         (total, building) =>
-          total + building.baseProduction * state.buildings[building.id],
+          total + building.baseProduction * state.buildings[building.id] * buildingProductionMultipliers[building.id],
         0,
       ),
-    [state.buildings],
+    [state.buildings, buildingProductionMultipliers],
   );
 
   const clickValue =
@@ -201,6 +214,32 @@ function App() {
     return () => window.clearInterval(timer);
   }, [emitCertificates]);
 
+  useEffect(() => {
+    const operators = state.buildings.operator;
+    if (operators <= 0) return;
+
+    let timer = 0;
+    const scheduleVisit = () => {
+      const delay = 30_000 + Math.random() * 30_000;
+      timer = window.setTimeout(() => {
+        const visitorCount = Math.min(8, Math.floor(Math.log2(operators)) + 1);
+        const visits = Array.from({ length: visitorCount }, (_, index) => ({
+          id: Date.now() + index + Math.random(),
+          delay: index * 450,
+        }));
+        setOperatorVisits((current) => [...current, ...visits]);
+        window.setTimeout(() => {
+          const ids = new Set(visits.map((visit) => visit.id));
+          setOperatorVisits((current) => current.filter((visit) => !ids.has(visit.id)));
+        }, 12_000);
+        scheduleVisit();
+      }, delay);
+    };
+
+    scheduleVisit();
+    return () => window.clearTimeout(timer);
+  }, [state.buildings.operator]);
+
   const buyBuilding = (id: BuildingId) => {
     const building = BUILDINGS.find((b) => b.id === id)!;
     const count = state.buildings[id];
@@ -225,6 +264,15 @@ function App() {
   const buyUpgrade = (id: UpgradeId) => {
     const upgrade = UPGRADES.find((u) => u.id === id)!;
     if (purchased.has(id)) return;
+
+    if (upgrade.category !== "general" && upgrade.tier) {
+      const requiredBuildings = upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25;
+      const ownedBuildings = state.buildings[upgrade.category];
+      if (ownedBuildings < requiredBuildings) {
+        setNotice(`${upgrade.name} unlocks at ${requiredBuildings} ${BUILDINGS.find((building) => building.id === upgrade.category)?.name} buildings.`);
+        return;
+      }
+    }
 
     if (state.certificates < upgrade.cost) {
       setNotice(`Not enough certificates. ${upgrade.name} costs ${formatNumber(upgrade.cost)}.`);
@@ -254,7 +302,8 @@ function App() {
         : "RSA CA deadline reached — migrate immediately.";
 
   return (
-    <main className="app-shell">
+    <div className="pkidle">
+      <main className="app-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark"><Waves size={22} /></div>
@@ -276,11 +325,16 @@ function App() {
             <div className="resource-value">{formatNumber(state.certificates)}</div>
             <div className="resource-rate">
               <Activity size={14} />
-              {formatNumber(productionPerSecond)} / sec
+              {formatProductionRate(productionPerSecond)} / sec
             </div>
           </div>
 
             <div className="jelly-stage" ref={jellyStageRef}>
+            <div className="ocean-haze" />
+            <div className="pixel-fish fish-one" />
+            <div className="pixel-fish fish-two" />
+            <div className="ocean-plant plant-left" />
+            <div className="ocean-plant plant-right" />
             <div className="bubble b1" />
             <div className="bubble b2" />
             <div className="bubble b3" />
@@ -297,26 +351,34 @@ function App() {
               aria-label="Issue a certificate"
             >
               <div className="jelly-glow" />
-              <div className="jelly-body">
-                <span className="jelly-face">•ᴗ•</span>
-              </div>
-              <div className="tentacles">
-                <i /><i /><i /><i /><i />
-              </div>
+              <PixelJellyfish />
             </button>
+            <div className="operator-visits" aria-hidden="true">
+              {operatorVisits.map((visit) => (
+                <span
+                  className="operator-visitor"
+                  key={visit.id}
+                  style={{ "--pkidle-swim-delay": `${visit.delay}ms` } as CSSProperties}
+                >
+                  <PixelOperatorSprite />
+                  <span className="operator-bubbles"><i /><i /><i /></span>
+                  <span className="operator-generated-certificate"><PixelCertificate /></span>
+                </span>
+              ))}
+            </div>
             <div className="certificate-effects" aria-hidden="true">
               {certificateEffects.map((effect) => (
                 <span
                   className={`certificate-effect ${effect.kind}`}
                   key={effect.id}
                   style={{
-                    "--effect-x": `${effect.offsetX}px`,
-                    "--effect-y": `${effect.offsetY}px`,
-                    "--origin-x": `${effect.originX}px`,
-                    "--origin-y": `${effect.originY}px`,
+                    "--pkidle-effect-x": `${effect.offsetX}px`,
+                    "--pkidle-effect-y": `${effect.offsetY}px`,
+                    "--pkidle-origin-x": `${effect.originX}px`,
+                    "--pkidle-origin-y": `${effect.originY}px`,
                   } as CSSProperties}
                 >
-                  <span className="certificate-icon">▤</span>
+                  <PixelCertificate />
                   {effect.kind === "click" && <strong>{effect.label}</strong>}
                 </span>
               ))}
@@ -389,20 +451,25 @@ function App() {
                 const count = state.buildings[building.id];
                 const cost = buildingCost(building, count);
                 const affordable = state.certificates >= cost;
+                const revealProgress = state.totalCertificates / cost;
+                if (revealProgress < 0.5 && !affordable) return null;
+                const nameRevealed = revealProgress >= 0.8 || affordable;
+                const infoRevealed = revealProgress >= 1 || affordable;
+                const partiallyRevealed = !nameRevealed;
                 return (
                   <button
-                    className={`item-card ${affordable ? "affordable" : ""}`}
+                    className={`item-card ${affordable ? "affordable" : partiallyRevealed ? "partial-reveal" : "near-unlock"}`}
                     key={building.id}
                     onClick={() => buyBuilding(building.id)}
                   >
-                    <div className="item-icon">{building.icon}</div>
+                    <div className="item-icon">{partiallyRevealed ? "?" : <PixelBuildingIcon id={building.id} />}</div>
                     <div className="item-info">
                       <div className="item-title">
-                        <strong>{building.name}</strong>
+                        <strong>{nameRevealed ? building.name : "????"}</strong>
                         <span>x{count}</span>
                       </div>
-                      <p>{building.description}</p>
-                      <small>+{formatNumber(building.baseProduction * productionMultiplier)} cert/sec each</small>
+                      {infoRevealed && <p>{building.description}</p>}
+                      {infoRevealed && <small>+{formatProductionRate(building.baseProduction * productionMultiplier * buildingProductionMultipliers[building.id])} cert/sec each</small>}
                     </div>
                     <div className="item-buy">
                       <span>DEPLOY</span>
@@ -412,38 +479,68 @@ function App() {
                   </button>
                 );
               })}
+              {!BUILDINGS.some((building) => {
+                const cost = buildingCost(building, state.buildings[building.id]);
+                return state.certificates >= cost || state.totalCertificates / cost >= 0.5;
+              }) && <p className="discovery-hint">More PKI infrastructure will be discovered as you issue certificates.</p>}
             </div>
           ) : (
-            <div className="item-list">
-              {UPGRADES.map((upgrade) => {
-                const owned = purchased.has(upgrade.id);
-                const affordable = state.certificates >= upgrade.cost;
-                return (
-                  <button
-                    className={`item-card upgrade ${owned ? "owned" : affordable ? "affordable" : ""}`}
-                    key={upgrade.id}
-                    onClick={() => buyUpgrade(upgrade.id)}
-                    disabled={owned}
-                  >
-                    <div className="item-icon"><FlaskConical size={22} /></div>
-                    <div className="item-info">
-                      <div className="item-title">
-                        <strong>{upgrade.name}</strong>
-                        {owned && <span className="owned-tag">INSTALLED</span>}
-                      </div>
-                      <p>{upgrade.description}</p>
-                      <small>
-                        {upgrade.multiplier ? `×${upgrade.multiplier} production` : `+${upgrade.clickBonus} click`}
-                      </small>
-                    </div>
-                    <div className="item-buy">
-                      <span>{owned ? "DONE" : "INSTALL"}</span>
-                      <strong>{owned ? "✓" : formatNumber(upgrade.cost)}</strong>
-                      {!owned && <ChevronRight size={16} />}
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="upgrade-categories">
+              {[
+                { id: "general", title: "General", upgrades: UPGRADES.filter((upgrade) => upgrade.category === "general") },
+                ...BUILDINGS.map((building) => ({
+                  id: building.id,
+                  title: building.name,
+                  upgrades: UPGRADES.filter((upgrade) => upgrade.category === building.id),
+                })),
+              ].map((category) => ({
+                ...category,
+                upgrades: category.upgrades.filter((upgrade) =>
+                  purchased.has(upgrade.id) || (upgrade.category === "general"
+                    ? state.totalCertificates / upgrade.cost >= 0.5
+                    : !upgrade.tier || state.buildings[upgrade.category] >= (upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25)),
+                ),
+              })).filter((category) => category.upgrades.length > 0).map((category) => (
+                <section className="upgrade-category" key={category.id}>
+                  <h3>{category.title}</h3>
+                  <div className="upgrade-grid">
+                    {category.upgrades.map((upgrade) => {
+                      const owned = purchased.has(upgrade.id);
+                      const affordable = state.certificates >= upgrade.cost;
+                      const revealProgress = state.totalCertificates / upgrade.cost;
+                      const nameRevealed = owned || revealProgress >= 0.8 || affordable;
+                      const infoRevealed = owned || revealProgress >= 1 || affordable;
+                      const partiallyRevealed = !nameRevealed;
+                      const effect = upgrade.buildingMultiplier
+                        ? `×${upgrade.buildingMultiplier} ${BUILDINGS.find((building) => building.id === upgrade.category)?.name ?? "building"} output`
+                        : upgrade.multiplier
+                          ? `×${upgrade.multiplier} production`
+                          : `+${upgrade.clickBonus} per click`;
+                      return (
+                        <button
+                          className={`upgrade-tile ${owned ? "owned" : affordable ? "affordable" : partiallyRevealed ? "partial-reveal" : "near-unlock"}`}
+                          key={upgrade.id}
+                          onClick={() => buyUpgrade(upgrade.id)}
+                          aria-disabled={owned}
+                          aria-label={`${nameRevealed ? upgrade.name : "Unknown upgrade"}. ${infoRevealed ? `${upgrade.description} ${effect}. ` : ""}Cost: ${formatNumber(upgrade.cost)} certificates. ${owned ? "Purchased" : affordable ? "Available to purchase" : "Not affordable yet"}.`}
+                        >
+                          <span className="upgrade-tile-icon">{partiallyRevealed ? "?" : <PixelUpgradeIcon category={upgrade.category} tier={upgrade.tier} />}</span>
+                          {owned && <span className="upgrade-tile-check">✓</span>}
+                          <span className="upgrade-tooltip" role="tooltip">
+                            <strong>{nameRevealed ? upgrade.name : "????"}</strong>
+                            {infoRevealed && <span>{upgrade.description}</span>}
+                            {infoRevealed && <em>{effect}</em>}
+                            <small>{owned ? "PURCHASED" : `COST · ${formatNumber(upgrade.cost)} CERTS`}</small>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+              {!UPGRADES.some((upgrade) =>
+                purchased.has(upgrade.id) || state.totalCertificates / upgrade.cost >= 0.5,
+              ) && <p className="discovery-hint">More upgrades will be discovered as you issue certificates.</p>}
             </div>
           )}
 
@@ -468,7 +565,8 @@ function App() {
         <span className="footer-spacer" />
         <span>Jellyfish PKI v0.1</span>
       </footer>
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -481,4 +579,8 @@ function formatDuration(seconds: number): string {
   return `${minutes}m ${secs.toString().padStart(2, "0")}s`;
 }
 
-export default App;
+function formatProductionRate(value: number): string {
+  return value > 0 && value < 1 ? value.toFixed(1) : formatNumber(value);
+}
+
+export default PKIdle;

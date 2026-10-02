@@ -1,6 +1,6 @@
-# 🪼 Jellyfish PKI
+# PKIdle
 
-A Cookie Clicker-style incremental browser game built with React + TypeScript.
+A Cookie Clicker-style incremental browser game built with React + TypeScript. The game module is packaged in the self-contained `PKIdle/` folder.
 
 The cookie is a jellyfish. Clicking it issues certificates. Buildings automate PKI operations, upgrades improve the cryptographic infrastructure, and an RSA certificate harvester creates pressure to migrate to post-quantum cryptography.
 
@@ -35,10 +35,14 @@ npm run build
 
 ## Architecture
 
-- `src/game.ts` — game definitions and formulas
-- `src/App.tsx` — game state, loop, purchasing and UI
-- `src/styles.css` — visual design
+- `PKIdle/PKIdle.tsx` — game state, loop, purchasing and UI
+- `PKIdle/game.ts` — game definitions and formulas
+- `PKIdle/PixelArt.tsx` — pixel-art assets
+- `PKIdle/pkidle.css` — scoped visual design
+- `PKIdle/index.ts` — component exports
 - `localStorage` — automatic browser save
+
+To embed the module in another React project, copy `PKIdle/` and import `PKIdle` from its `index.ts`. The host project must provide React 18+ and `lucide-react`.
 
 ## Good next additions
 
