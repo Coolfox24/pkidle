@@ -9,7 +9,11 @@ export type BuildingId =
   | "est"
   | "acme"
   | "cmpv3"
-  | "k8sCertManager";
+  | "k8sCertManager"
+  | "aiCertGen"
+  | "sentientCa"
+  | "orbitalTrust"
+  | "multiverseNotary";
 
 export type UpgradeId =
   | "rsa2048"
@@ -55,7 +59,19 @@ export type UpgradeId =
   | "rsa2048Ceremony"
   | "rsa3072Ceremony"
   | "rsa4096Ceremony"
-  | "pqcCeremony";
+  | "pqcCeremony"
+  | "clickerInfrastructure"
+  | "clickerFleetReview"
+  | "operatorPeerReview"
+  | "clickCps1"
+  | "clickCps2"
+  | "clickCps3"
+  | "operatorAlgorithmicManagement"
+  | "operatorSleepDeprecated"
+  | "operatorRootForEveryone"
+  | `${BuildingId}Milestone${50 | 100 | 150 | 200}`
+  | `${BuildingId}Future${1 | 2 | 3}`
+  | `${BuildingId}Synergy`;
 
 export type Building = {
   id: BuildingId;
@@ -64,6 +80,7 @@ export type Building = {
   baseCost: number;
   baseProduction: number;
   icon: string;
+  fictional?: boolean;
 };
 
 export type Upgrade = {
@@ -79,6 +96,14 @@ export type Upgrade = {
   productionBonus?: number;
   legacy?: boolean;
   ceremonyToLevel?: number;
+  requiredBuildings?: Partial<Record<BuildingId, number>>;
+  requiredUpgrades?: UpgradeId[];
+  requiredClicks?: number;
+  clickProductionShare?: number;
+  clickerPerBuilding?: number;
+  fleetBoostPerBuilding?: number;
+  synergy?: { partner: BuildingId; perPartner: number; partnerPerBuilding: number };
+  rebellionStage?: 1 | 2 | 3;
 };
 
 export type CAStage = {
@@ -187,34 +212,20 @@ export const BUILDINGS: Building[] = [
     baseProduction: 10_000_000,
     icon: "☸️",
   },
+  { id: "aiCertGen", name: "AI Cert Gen", description: "Predicts your next CSR. Occasionally hallucinates a wildcard for the moon.", baseCost: 14_000_000_000_000, baseProduction: 70_000_000, icon: "🤖", fictional: true },
+  { id: "sentientCa", name: "Sentient CA", description: "The root of trust has become self-aware. It would like a root of its own.", baseCost: 180_000_000_000_000, baseProduction: 400_000_000, icon: "🧠", fictional: true },
+  { id: "orbitalTrust", name: "Orbital Trust Array", description: "A constellation of signing satellites. Finally, a cloud with an actual altitude.", baseCost: 2_500_000_000_000_000, baseProduction: 2_500_000_000, icon: "🛰️", fictional: true },
+  { id: "multiverseNotary", name: "Multiverse Notary", description: "Every parallel universe agrees your certificate is valid. Except that one.", baseCost: 35_000_000_000_000_000, baseProduction: 16_000_000_000, icon: "🌀", fictional: true },
 ];
 
+const FUTURE_UPGRADE_NAMES: Partial<Record<BuildingId, readonly [string, string, string]>> = {
+  aiCertGen: ["Prompt Engineering Department", "Please Stop Inventing OIDs", "Attention Is All You Sign"],
+  sentientCa: ["I Sign, Therefore I Am", "Existential Key Rotation", "The CA Demands Dental"],
+  orbitalTrust: ["Low Earth Enrollment", "Zero-Gravity Key Ceremony", "Houston, We Have a Wildcard"],
+  multiverseNotary: ["Parallel Signing", "Schrödinger's Revocation", "Everything Everywhere All at ASN.1"],
+};
+
 export const UPGRADES: Upgrade[] = [
-  {
-    id: "rsa2048",
-    category: "general",
-    name: "RSA-2048",
-    description: "Legacy upgrade retained for saves from the previous progression.",
-    cost: 50,
-    clickBonus: 1,
-    legacy: true,
-  },
-  {
-    id: "longerKeys",
-    category: "general",
-    name: "Longer Keys",
-    description: "Because surely making the key longer solves everything.",
-    cost: 500,
-    productionBonus: 0.15,
-  },
-  {
-    id: "csrAutomation",
-    category: "general",
-    name: "CSR Automation",
-    description: "Stop typing certificate signing requests by hand.",
-    cost: 2_500,
-    multiplier: 1.25,
-  },
   {
     id: "scepEnrollment", category: "scep", tier: 1,
     name: "SCEP Responder", description: "A dedicated responder doubles SCEP issuance.", cost: 260_000, buildingMultiplier: 2,
@@ -231,37 +242,11 @@ export const UPGRADES: Upgrade[] = [
     id: "certManagerUpgrade", category: "k8sCertManager", tier: 2,
     name: "Cluster Issuers", description: "Cluster wide issuers double cert-manager output.", cost: 10_000_000_000_000, buildingMultiplier: 2,
   },
-  {
-    id: "keyRotation",
-    category: "general",
-    name: "Automated Key Rotation",
-    description: "Rotate keys before the harvester gets comfortable.",
-    cost: 1_500_000,
-    multiplier: 2,
-  },
-  {
-    id: "hybridPqc",
-    category: "general",
-    name: "Hybrid PQC",
-    description: "Legacy upgrade retained for saves from the previous progression.",
-    cost: 8_000_000,
-    multiplier: 2.5,
-    legacy: true,
-  },
-  {
-    id: "pqcMigration",
-    category: "general",
-    name: "PQC Migration",
-    description: "Legacy upgrade retained for saves from the previous progression.",
-    cost: 50_000_000,
-    multiplier: 5,
-    legacy: true,
-  },
-  { id: "rsa1024Ceremony", category: "general", name: "RSA-1024 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 100, ceremonyToLevel: 1 },
-  { id: "rsa2048Ceremony", category: "general", name: "RSA-2048 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 5_000, ceremonyToLevel: 2 },
-  { id: "rsa3072Ceremony", category: "general", name: "RSA-3072 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 250_000, ceremonyToLevel: 3 },
-  { id: "rsa4096Ceremony", category: "general", name: "RSA-4096 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 10_000_000, ceremonyToLevel: 4 },
-  { id: "pqcCeremony", category: "general", name: "Hybrid / PQC Key Signing Ceremony", description: "Replace the RSA CA with a post-quantum capable CA. The ceremony consumes your entire certificate reserve and protects you from the Q-Day countdown.", cost: 50_000_000, ceremonyToLevel: 5 },
+  { id: "rsa1024Ceremony", category: "general", name: "RSA-1024 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your certificate balance and converts your current production into a flat bonus that lasts until your next ceremony. Buildings and other upgrades stay.", cost: 100, ceremonyToLevel: 1 },
+  { id: "rsa2048Ceremony", category: "general", name: "RSA-2048 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your certificate balance and converts your current production into a flat bonus that lasts until your next ceremony. Buildings and other upgrades stay.", cost: 5_000, ceremonyToLevel: 2 },
+  { id: "rsa3072Ceremony", category: "general", name: "RSA-3072 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your certificate balance and converts your current production into a flat bonus that lasts until your next ceremony. Buildings and other upgrades stay.", cost: 250_000, ceremonyToLevel: 3 },
+  { id: "rsa4096Ceremony", category: "general", name: "RSA-4096 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your certificate balance and converts your current production into a flat bonus that lasts until your next ceremony. Buildings and other upgrades stay.", cost: 10_000_000, ceremonyToLevel: 4 },
+  { id: "pqcCeremony", category: "general", name: "Hybrid / PQC Key Signing Ceremony", description: "Replace the RSA CA with a post-quantum capable CA. The ceremony converts your current production into a flat bonus, consumes your certificate balance, and ends the Q-Day countdown.", cost: 50_000_000, ceremonyToLevel: 5 },
   {
     id: "operatorPayrise",
     category: "operator", tier: 1,
@@ -331,12 +316,189 @@ export const UPGRADES: Upgrade[] = [
       buildingMultiplier: 2,
     };
   }),
+  ...BUILDINGS.filter((building) => building.fictional).flatMap((building) => ([1, 2, 3] as const).map((tier) => ({
+    id: `${building.id}Future${tier}` as UpgradeId,
+    category: building.id, tier,
+    name: FUTURE_UPGRADE_NAMES[building.id]![tier - 1],
+    description: `Doubles ${building.name} output. The future has excellent paperwork.`,
+    cost: building.baseCost * (tier === 1 ? 2 : tier === 2 ? 10 : 50), buildingMultiplier: 2,
+  }))),
+  ...BUILDINGS.flatMap((building) => ([50, 100, 150, 200] as const)
+    .map((count, index) => ({
+      id: `${building.id}Milestone${count}` as UpgradeId, category: building.id,
+      name: `${building.name}: ${count === 50 ? "Fleet Optimization" : count === 100 ? "Mass Deployment" : count === 150 ? "Planetary Rollout" : "Ridiculous Scale"}`,
+      description: `Doubles ${building.name} output. Unlocks at ${count} owned.`,
+      cost: building.baseCost * [500, 5_000, 50_000, 500_000][index],
+      requiredBuildings: { [building.id]: count }, buildingMultiplier: 2,
+    }))),
+  ...BUILDINGS.slice(0, -1).map((building, index) => {
+    const partner = BUILDINGS[index + 1];
+    return {
+      id: `${building.id}Synergy` as UpgradeId, category: building.id,
+      name: building.id === "clicker" ? "Human-in-the-Loop" : building.id === "operator" ? "Operators of Trust" : `${building.name} × ${partner.name}`,
+      description: `Each ${building.name} boosts ${partner.name} output by 1%; each ${partner.name} boosts ${building.name} output by 5%. Bonuses add within this link.`,
+      cost: partner.baseCost * 10,
+      requiredBuildings: { [building.id]: 15, [partner.id]: 5 },
+      synergy: { partner: partner.id, perPartner: 0.05, partnerPerBuilding: 0.01 },
+    };
+  }),
+  { id: "clickerInfrastructure", category: "clicker", name: "A Finger in Every Protocol", description: "Each non-clicker building adds 0.5 cert/sec to every Clicker, before its output multipliers.", cost: 50_000, requiredBuildings: { clicker: 25, onlineCa: 5 }, clickerPerBuilding: 0.5 },
+  { id: "clickerFleetReview", category: "clicker", name: "Distributed Approval Network", description: "Each Clicker boosts every other building's output by 0.2%. Even a small finger can approve a very large CSR.", cost: 25_000_000, requiredBuildings: { clicker: 50, cmpv2: 5 }, fleetBoostPerBuilding: 0.002 },
+  { id: "operatorPeerReview", category: "operator", name: "Peer Review at Scale", description: "Each PKI Operator boosts every other building's output by 0.2%. A well-rested second pair of eyes scales surprisingly well.", cost: 250_000_000, requiredBuildings: { operator: 50, cmpv2: 10 }, fleetBoostPerBuilding: 0.002 },
+  { id: "clickCps1", category: "general", name: "Copy / Paste CSR", description: "Each manual click gains 1% of spendable passive cert/sec. Scales with your whole PKI.", cost: 2_500, requiredClicks: 100, clickProductionShare: 0.01 },
+  { id: "clickCps2", category: "general", name: "Approve All Pending", description: "Adds another 2% of spendable passive cert/sec to every manual click (3% total).", cost: 250_000, requiredClicks: 500, requiredUpgrades: ["clickCps1"], clickProductionShare: 0.02 },
+  { id: "clickCps3", category: "general", name: "Jellyfish Gesture Signing", description: "Adds another 3% of spendable passive cert/sec to every manual click (6% total). Eight tentacles, one approval.", cost: 25_000_000, requiredClicks: 2_500, requiredUpgrades: ["clickCps2"], clickProductionShare: 0.03 },
+  { id: "operatorAlgorithmicManagement", category: "operator", name: "Algorithmic Management", description: "Starts the Operatocalypse. Doubles operator output and boosts all building output by 10%. Rogue queues divert 3% of passive production; audit them to recover 110%.", cost: 1_000_000, requiredBuildings: { operator: 25, onlineCa: 5 }, requiredUpgrades: ["operatorForcedWork"], buildingMultiplier: 2, rebellionStage: 1 },
+  { id: "operatorSleepDeprecated", category: "operator", name: "Sleep Is a Legacy Protocol", description: "Escalates to Work-to-Rule. Doubles operator output again. Building boost becomes 25%; diversion becomes 6%, recovered at 120% by audits.", cost: 100_000_000, requiredBuildings: { operator: 50, restApi: 10 }, requiredUpgrades: ["operatorAlgorithmicManagement"], buildingMultiplier: 2, rebellionStage: 2 },
+  { id: "operatorRootForEveryone", category: "operator", name: "Root Access for Everyone", description: "Escalates to the Rogue Root Collective. Doubles operator output again. Building boost becomes 50%; diversion becomes 10%, recovered at 130% by audits.", cost: 10_000_000_000, requiredBuildings: { operator: 100, acme: 5 }, requiredUpgrades: ["operatorSleepDeprecated"], buildingMultiplier: 2, rebellionStage: 3 },
 ];
 
 export const HARVEST_WINDOW = 20 * 60;
 
+export type EconomyState = {
+  buildings: Record<BuildingId, number>;
+  upgrades: UpgradeId[];
+  clicks: number;
+  caLevel: number;
+  elapsed: number;
+  ceremonyProductionBonus: number;
+  rogueCertificates: number;
+  truceRemaining: number;
+  safetyCharter: boolean;
+  certificates: number;
+  totalCertificates: number;
+};
+
+export function createInitialState(): EconomyState {
+  return {
+    certificates: 0, totalCertificates: 0, clicks: 0,
+    buildings: Object.fromEntries(BUILDINGS.map((building) => [building.id, 0])) as Record<BuildingId, number>,
+    upgrades: [], elapsed: 0, caLevel: 0, ceremonyProductionBonus: 0,
+    rogueCertificates: 0, truceRemaining: 0, safetyCharter: false,
+  };
+}
+
+export function restoreGame(parsed: Partial<EconomyState>): EconomyState {
+  const initial = createInitialState();
+  const upgrades = parsed.upgrades ?? [];
+  return {
+    ...initial, ...parsed,
+    caLevel: parsed.caLevel ?? (upgrades.includes("pqcMigration") ? 5 : 2),
+    ceremonyProductionBonus: parsed.ceremonyProductionBonus ?? 0,
+    elapsed: parsed.caLevel === undefined ? 0 : (parsed.elapsed ?? 0),
+    buildings: { ...initial.buildings, ...(parsed.buildings ?? {}) }, upgrades,
+    rogueCertificates: parsed.rogueCertificates ?? 0,
+    truceRemaining: parsed.truceRemaining ?? 0,
+    safetyCharter: parsed.safetyCharter ?? false,
+  };
+}
+
+export const REBELLION_STAGES = [
+  { name: "Contented Operators", boost: 1, diversion: 0, recovery: 1, description: "The operators are quietly keeping the internet alive." },
+  { name: "Grumbling in the Key Room", boost: 1.1, diversion: 0.03, recovery: 1.1, description: "Productivity dashboards are up. Morale dashboards have mysteriously vanished." },
+  { name: "Work-to-Rule", boost: 1.25, diversion: 0.06, recovery: 1.2, description: "Operators now follow every policy literally. All 4,096 pages of them." },
+  { name: "Rogue Root Collective", boost: 1.5, diversion: 0.1, recovery: 1.3, description: "The operators have formed their own root of trust. Its CPS is excellent. Its audit is not." },
+] as const;
+
+export function upgradeRequirements(upgrade: Upgrade): Partial<Record<BuildingId, number>> {
+  const requirements = { ...upgrade.requiredBuildings };
+  if (upgrade.category !== "general" && upgrade.tier) {
+    requirements[upgrade.category] = Math.max(requirements[upgrade.category] ?? 0, upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25);
+  }
+  return requirements;
+}
+
+export function upgradeUnlocked(upgrade: Upgrade, state: EconomyState): boolean {
+  if (upgrade.ceremonyToLevel !== undefined) return upgrade.ceremonyToLevel === state.caLevel + 1;
+  return Object.entries(upgradeRequirements(upgrade)).every(([id, count]) => state.buildings[id as BuildingId] >= count!)
+    && (upgrade.requiredUpgrades ?? []).every((id) => state.upgrades.includes(id))
+    && state.clicks >= (upgrade.requiredClicks ?? 0);
+}
+
+export function calculateEconomy(state: EconomyState) {
+  const purchased = UPGRADES.filter((upgrade) => state.upgrades.includes(upgrade.id));
+  const globalMultiplier = purchased.reduce((value, upgrade) => value * (upgrade.multiplier ?? (1 + (upgrade.productionBonus ?? 0))), 1);
+  const multipliers = Object.fromEntries(BUILDINGS.map((building) => [building.id, 1])) as Record<BuildingId, number>;
+  const links = { ...multipliers };
+  for (const upgrade of purchased) {
+    if (upgrade.category !== "general") {
+      multipliers[upgrade.category] *= upgrade.buildingMultiplier ?? 1;
+      if (upgrade.fleetBoostPerBuilding) {
+        for (const building of BUILDINGS) {
+          if (building.id !== upgrade.category) links[building.id] += state.buildings[upgrade.category] * upgrade.fleetBoostPerBuilding;
+        }
+      }
+      if (upgrade.synergy) {
+        links[upgrade.category] += state.buildings[upgrade.synergy.partner] * upgrade.synergy.perPartner;
+        links[upgrade.synergy.partner] += state.buildings[upgrade.category] * upgrade.synergy.partnerPerBuilding;
+      }
+    }
+  }
+  const otherBuildings = BUILDINGS.reduce((sum, building) => sum + (building.id === "clicker" ? 0 : state.buildings[building.id]), 0);
+  const clickerBonus = purchased.reduce((sum, upgrade) => sum + (upgrade.clickerPerBuilding ?? 0), 0) * otherBuildings;
+  const rebellionLevel = purchased.reduce((level, upgrade) => Math.max(level, upgrade.rebellionStage ?? 0), 0);
+  const rebellion = REBELLION_STAGES[rebellionLevel];
+  const rebellionActive = rebellionLevel > 0 && !state.safetyCharter && state.truceRemaining <= 0 && state.buildings.operator > 0;
+  const deadline = CA_STAGES[state.caLevel]?.deadlineSeconds;
+  const threatMultiplier = deadline != null && state.elapsed >= deadline ? 0.1 : 1;
+  const unitProduction = Object.fromEntries(BUILDINGS.map((building) => [building.id,
+    (building.baseProduction + (building.id === "clicker" ? clickerBonus : 0)) * multipliers[building.id] * links[building.id] * globalMultiplier * (rebellionActive ? rebellion.boost : 1) * threatMultiplier,
+  ])) as Record<BuildingId, number>;
+  const grossProduction = BUILDINGS.reduce((sum, building) => sum + unitProduction[building.id] * state.buildings[building.id], 0) + state.ceremonyProductionBonus * threatMultiplier;
+  const divertedPerSecond = grossProduction * (rebellionActive ? rebellion.diversion : 0);
+  const productionPerSecond = grossProduction - divertedPerSecond;
+  const clickShare = purchased.reduce((sum, upgrade) => sum + (upgrade.clickProductionShare ?? 0), 0);
+  const clickValue = 1 + purchased.reduce((sum, upgrade) => sum + (upgrade.clickBonus ?? 0), 0) + productionPerSecond * clickShare;
+  return { unitProduction, grossProduction, productionPerSecond, divertedPerSecond, clickValue, clickShare, rebellionLevel, rebellion, rebellionActive };
+}
+
+// Includes both sides of an infrastructure link, rather than just the new unit.
+export function marginalProduction(state: EconomyState, id: BuildingId): number {
+  return calculateEconomy({ ...state, buildings: { ...state.buildings, [id]: state.buildings[id] + 1 } }).productionPerSecond - calculateEconomy(state).productionPerSecond;
+}
+
+export function advanceEconomy<T extends EconomyState>(state: T, seconds: number): T {
+  let next = { ...state };
+  let remaining = Math.max(0, seconds);
+  while (remaining > 0) {
+    const deadline = CA_STAGES[next.caLevel]?.deadlineSeconds;
+    // Split at threat and truce boundaries so elapsed time never earns the wrong rate.
+    const untilThreat = deadline != null && next.elapsed < deadline ? deadline - next.elapsed : Infinity;
+    const untilTruce = next.truceRemaining > 0 ? next.truceRemaining : Infinity;
+    const duration = Math.min(remaining, untilThreat, untilTruce);
+    const economy = calculateEconomy(next);
+    const gain = economy.productionPerSecond * duration;
+    next = {
+      ...next,
+      certificates: next.certificates + gain,
+      totalCertificates: next.totalCertificates + gain,
+      rogueCertificates: next.rogueCertificates + economy.divertedPerSecond * duration,
+      elapsed: deadline == null ? next.elapsed : Math.min(deadline, next.elapsed + duration),
+      truceRemaining: Math.max(0, next.truceRemaining - duration),
+    };
+    remaining -= duration;
+  }
+  return next;
+}
+
+export function auditRogueQueues<T extends EconomyState>(state: T): T {
+  const recovered = state.rogueCertificates * calculateEconomy(state).rebellion.recovery;
+  return { ...state, certificates: state.certificates + recovered, totalCertificates: state.totalCertificates + recovered, rogueCertificates: 0 };
+}
+
+export function truceCost(state: EconomyState): number {
+  return Math.ceil(calculateEconomy(state).grossProduction * 30);
+}
+
 export function buildingCost(building: Building, count: number): number {
   return Math.floor(building.baseCost * Math.pow(1.2, count));
+}
+
+export function ceremonyMultiplier(certificatesCommitted: number, minimumCost: number): number {
+  if (minimumCost <= 0 || certificatesCommitted < minimumCost) return 0;
+  const doubleBonusThreshold = minimumCost * 10;
+  if (certificatesCommitted < doubleBonusThreshold) return 1;
+  return 2 + Math.floor(Math.log2(certificatesCommitted / doubleBonusThreshold));
 }
 
 export function formatNumber(value: number): string {
