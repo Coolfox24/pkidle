@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import {
   BUILDINGS,
-  HARVEST_WINDOW,
+  CA_STAGES,
   UPGRADES,
   buildingCost,
   formatNumber,
@@ -45,6 +45,8 @@ type SaveState = {
   buildings: Record<BuildingId, number>;
   upgrades: UpgradeId[];
   elapsed: number;
+  caLevel: number;
+  ceremonyMultiplier: number;
 };
 
 const initialBuildings = Object.fromEntries(
@@ -58,6 +60,8 @@ const initialState: SaveState = {
   buildings: initialBuildings,
   upgrades: [],
   elapsed: 0,
+  caLevel: 0,
+  ceremonyMultiplier: 1,
 };
 
 function loadGame(): SaveState {
@@ -65,11 +69,16 @@ function loadGame(): SaveState {
     const raw = localStorage.getItem("jellyfish-pki-save");
     if (!raw) return initialState;
     const parsed = JSON.parse(raw) as Partial<SaveState>;
+    const oldUpgrades = parsed.upgrades ?? [];
+    const legacyCaLevel = oldUpgrades.includes("pqcMigration") ? 5 : 2;
     return {
       ...initialState,
       ...parsed,
+      caLevel: parsed.caLevel ?? legacyCaLevel,
+      ceremonyMultiplier: parsed.ceremonyMultiplier ?? 1,
+      elapsed: parsed.caLevel === undefined ? 0 : (parsed.elapsed ?? 0),
       buildings: { ...initialBuildings, ...(parsed.buildings ?? {}) },
-      upgrades: parsed.upgrades ?? [],
+      upgrades: oldUpgrades,
     };
   } catch {
     return initialState;
@@ -126,20 +135,25 @@ export function PKIdle() {
       0,
     );
 
-  const productionPerSecond = baseProduction * productionMultiplier;
+  const caStage = CA_STAGES[Math.min(state.caLevel, CA_STAGES.length - 1)];
+  const pqcUnlocked = state.caLevel >= CA_STAGES.length - 1;
+  const deadlineSeconds = caStage.deadlineSeconds ?? 0;
+  const timeRemaining = Math.max(0, deadlineSeconds - state.elapsed);
+  const threatExpired = !pqcUnlocked && timeRemaining === 0;
+  const harvestProgress = deadlineSeconds > 0 ? Math.min(state.elapsed / deadlineSeconds, 1) : 0;
+  const productionPerSecond = baseProduction * productionMultiplier * state.ceremonyMultiplier * (threatExpired ? 0.1 : 1);
   productionRateRef.current = productionPerSecond;
   clickValueRef.current = clickValue;
-  const harvestProgress = Math.min(state.elapsed / HARVEST_WINDOW, 1);
-  const timeRemaining = Math.max(0, HARVEST_WINDOW - state.elapsed);
-  const pqcUnlocked = purchased.has("pqcMigration");
 
   const caStatus = pqcUnlocked
     ? { label: "PQC CA ACTIVE", className: "safe", icon: "🧬" }
-    : harvestProgress >= 0.85
-      ? { label: "QUANTUM THREAT CRITICAL", className: "critical", icon: "☢️" }
-      : harvestProgress >= 0.6
-        ? { label: "HARVESTING DETECTED", className: "warning", icon: "🐢" }
-        : { label: "RSA CA ONLINE", className: "online", icon: "🔑" };
+    : threatExpired
+      ? { label: "RSA KEY COMPROMISED", className: "critical", icon: "⚠️" }
+      : harvestProgress >= 0.85
+        ? { label: state.caLevel === 4 ? "QUANTUM THREAT CRITICAL" : "KEY BREAKTHROUGH IMMINENT", className: "critical", icon: "☢️" }
+        : harvestProgress >= 0.6
+          ? { label: "ATTACK PROGRESSING", className: "warning", icon: "🐢" }
+          : { label: `${caStage.name} CA ONLINE`, className: "online", icon: "🔑" };
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -154,13 +168,13 @@ export function PKIdle() {
           totalCertificates: current.totalCertificates + gain,
           elapsed: pqcUnlocked
             ? current.elapsed
-            : Math.min(current.elapsed + delta, HARVEST_WINDOW),
+            : Math.min(current.elapsed + delta, deadlineSeconds),
         };
       });
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [lastTick, productionPerSecond, pqcUnlocked]);
+  }, [lastTick, productionPerSecond, pqcUnlocked, deadlineSeconds]);
 
   useEffect(() => {
     localStorage.setItem("jellyfish-pki-save", JSON.stringify(state));
@@ -168,9 +182,11 @@ export function PKIdle() {
 
   useEffect(() => {
     if (timeRemaining === 0 && !pqcUnlocked) {
-      setNotice("The harvester has arrived. Your RSA CA is exposed.");
+      setNotice(state.caLevel === 4
+        ? "Q-Day has arrived. Your RSA-4096 CA is compromised; productivity is reduced until you hold the PQC ceremony."
+        : `Attackers have broken your ${caStage.name} CA. Productivity is reduced until you hold the next key signing ceremony.`);
     }
-  }, [timeRemaining, pqcUnlocked]);
+  }, [timeRemaining, pqcUnlocked, state.caLevel, caStage.name]);
 
   const issueCertificate = useCallback(() => {
     setState((current) => ({
@@ -274,6 +290,26 @@ export function PKIdle() {
       }
     }
 
+    if (upgrade.ceremonyToLevel !== undefined) {
+      if (upgrade.ceremonyToLevel !== state.caLevel + 1) return;
+      if (state.certificates < upgrade.cost) {
+        setNotice(`The ${upgrade.name} requires at least ${formatNumber(upgrade.cost)} certificates.`);
+        return;
+      }
+      const consumed = state.certificates;
+      const ceremonyBoost = 1 + Math.log2(1 + consumed / upgrade.cost);
+      setState((current) => ({
+        ...current,
+        certificates: 0,
+        caLevel: upgrade.ceremonyToLevel!,
+        ceremonyMultiplier: ceremonyBoost,
+        elapsed: 0,
+        upgrades: [...current.upgrades, id],
+      }));
+      setNotice(`${upgrade.name} complete. ${formatNumber(consumed)} certificates consumed; productivity is now ×${ceremonyBoost.toFixed(2)}. Buildings and upgrades retained.`);
+      return;
+    }
+
     if (state.certificates < upgrade.cost) {
       setNotice(`Not enough certificates. ${upgrade.name} costs ${formatNumber(upgrade.cost)}.`);
       return;
@@ -294,12 +330,15 @@ export function PKIdle() {
     setNotice("PKI wiped. The jellyfish awaits.");
   };
 
-  const progressText =
-    pqcUnlocked
-      ? "Quantum-safe migration complete."
+  const progressText = pqcUnlocked
+    ? "Quantum-safe migration complete."
+    : state.caLevel === 4
+      ? timeRemaining > 0
+        ? `${formatDuration(timeRemaining)} until Q-Day harvest`
+        : "Q-Day arrived — productivity reduced until PQC migration."
       : timeRemaining > 0
-        ? `${formatDuration(timeRemaining)} until the RSA harvesting deadline`
-        : "RSA CA deadline reached — migrate immediately.";
+        ? `${formatDuration(timeRemaining)} until hackers break ${caStage.name}`
+        : `${caStage.name} is compromised — hold the next signing ceremony.`;
 
   return (
     <div className="pkidle">
@@ -399,7 +438,12 @@ export function PKIdle() {
             </div>
             <div className="metric">
               <span>Architecture</span>
-              <strong>{pqcUnlocked ? "Hybrid / PQC" : "RSA-2048"}</strong>
+              <strong>{caStage.name}</strong>
+            </div>
+            <p className="ca-security-note">{caStage.securityNote}</p>
+            <div className="metric">
+              <span>Key signing bonus</span>
+              <strong>×{state.ceremonyMultiplier.toFixed(2)}</strong>
             </div>
             <div className="metric">
               <span>Certificates</span>
@@ -419,10 +463,14 @@ export function PKIdle() {
                 <ShieldAlert size={20} />
                 <div>
                   <span className="eyebrow">CRYPTOGRAPHIC THREAT</span>
-                  <h2>{pqcUnlocked ? "PQC migration complete" : "Harvest Now, Decrypt Later"}</h2>
+                  <h2>{pqcUnlocked ? "PQC migration complete" : state.caLevel === 4 ? "Harvest Now, Decrypt Later" : "Hackers vs. Key Length"}</h2>
                 </div>
               </div>
-              <p>{pqcUnlocked ? "The quantum turtle has nothing useful left to harvest." : "A certificate harvester is collecting your RSA certificates. Migrate to PQC before the quantum tide arrives."}</p>
+              <p>{pqcUnlocked
+                ? "The quantum turtle has nothing useful left to harvest. Your buildings and upgrades remain in place."
+                : state.caLevel === 4
+                  ? "Your RSA-4096 CA has reached the Q-Day threat. Complete the PQC key signing ceremony before the harvest countdown ends."
+                  : `Attackers are working on your ${caStage.name} key. Use a key signing ceremony in General upgrades to advance; the deadline gets longer as your key strengthens.`}</p>
             </div>
             <div className="timer">
               <span>{progressText}</span>
@@ -430,7 +478,7 @@ export function PKIdle() {
                 <div className={`progress-fill ${pqcUnlocked ? "pqc" : ""}`} style={{ width: `${harvestProgress * 100}%` }} />
               </div>
               <div className="timer-row">
-                <span>{pqcUnlocked ? "PROTECTED" : `${Math.round(harvestProgress * 100)}% HARVESTED`}</span>
+                <span>{pqcUnlocked ? "PROTECTED" : state.caLevel === 4 ? `${Math.round(harvestProgress * 100)}% HARVESTED` : `${Math.round(harvestProgress * 100)}% KEY ATTACK`}</span>
                 <strong>{pqcUnlocked ? "✓" : formatDuration(timeRemaining)}</strong>
               </div>
             </div>
@@ -495,11 +543,15 @@ export function PKIdle() {
                 })),
               ].map((category) => ({
                 ...category,
-                upgrades: category.upgrades.filter((upgrade) =>
-                  purchased.has(upgrade.id) || (upgrade.category === "general"
+                upgrades: category.upgrades.filter((upgrade) => {
+                  if (upgrade.legacy) return purchased.has(upgrade.id);
+                  if (upgrade.ceremonyToLevel !== undefined) {
+                    return purchased.has(upgrade.id) || upgrade.ceremonyToLevel === state.caLevel + 1;
+                  }
+                  return purchased.has(upgrade.id) || (upgrade.category === "general"
                     ? state.totalCertificates / upgrade.cost >= 0.5
-                    : !upgrade.tier || state.buildings[upgrade.category] >= (upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25)),
-                ),
+                    : !upgrade.tier || state.buildings[upgrade.category] >= (upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25));
+                }),
               })).filter((category) => category.upgrades.length > 0).map((category) => (
                 <section className="upgrade-category" key={category.id}>
                   <h3>{category.title}</h3>
@@ -508,10 +560,16 @@ export function PKIdle() {
                       const owned = purchased.has(upgrade.id);
                       const affordable = state.certificates >= upgrade.cost;
                       const revealProgress = state.totalCertificates / upgrade.cost;
-                      const nameRevealed = owned || revealProgress >= 0.8 || affordable;
-                      const infoRevealed = owned || revealProgress >= 1 || affordable;
+                      const ceremonyUpgrade = upgrade.ceremonyToLevel !== undefined;
+                      const nameRevealed = ceremonyUpgrade || owned || revealProgress >= 0.8 || affordable;
+                      const infoRevealed = ceremonyUpgrade || owned || revealProgress >= 1 || affordable;
                       const partiallyRevealed = !nameRevealed;
-                      const effect = upgrade.buildingMultiplier
+                      const ceremonyPreview = ceremonyUpgrade
+                        ? 1 + Math.log2(1 + state.certificates / upgrade.cost)
+                        : 1;
+                      const effect = ceremonyUpgrade
+                        ? `Consumes all certificates · productivity ×${ceremonyPreview.toFixed(2)} until next ceremony`
+                        : upgrade.buildingMultiplier
                         ? `×${upgrade.buildingMultiplier} ${BUILDINGS.find((building) => building.id === upgrade.category)?.name ?? "building"} output`
                         : upgrade.multiplier
                           ? `×${upgrade.multiplier} production`
@@ -530,7 +588,7 @@ export function PKIdle() {
                             <strong>{nameRevealed ? upgrade.name : "????"}</strong>
                             {infoRevealed && <span>{upgrade.description}</span>}
                             {infoRevealed && <em>{effect}</em>}
-                            <small>{owned ? "PURCHASED" : `COST · ${formatNumber(upgrade.cost)} CERTS`}</small>
+                            <small>{owned ? "PURCHASED" : `${ceremonyUpgrade ? "MINIMUM" : "COST"} · ${formatNumber(upgrade.cost)} CERTS`}</small>
                           </span>
                         </button>
                       );

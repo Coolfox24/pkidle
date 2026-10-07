@@ -50,7 +50,12 @@ export type UpgradeId =
   | "cmpv3MoreAsn1Again"
   | "cmpv3MoreAsn1AgainAgain"
   | "k8sIngressCertificates"
-  | "k8sHasOwnCrds";
+  | "k8sHasOwnCrds"
+  | "rsa1024Ceremony"
+  | "rsa2048Ceremony"
+  | "rsa3072Ceremony"
+  | "rsa4096Ceremony"
+  | "pqcCeremony";
 
 export type Building = {
   id: BuildingId;
@@ -72,7 +77,26 @@ export type Upgrade = {
   buildingMultiplier?: number;
   clickBonus?: number;
   productionBonus?: number;
+  legacy?: boolean;
+  ceremonyToLevel?: number;
 };
+
+export type CAStage = {
+  name: string;
+  securityNote: string;
+  deadlineSeconds: number | null;
+  nextCeremony: UpgradeId | null;
+  ceremonyMinimum: number | null;
+};
+
+export const CA_STAGES: CAStage[] = [
+  { name: "RSA-512", securityNote: "Legacy game tier, far below today's 112-bit security-strength baseline.", deadlineSeconds: 3 * 60, nextCeremony: "rsa1024Ceremony", ceremonyMinimum: 100 },
+  { name: "RSA-1024", securityNote: "Legacy tier; below NIST's 112-bit minimum for new RSA signature generation.", deadlineSeconds: 6 * 60, nextCeremony: "rsa2048Ceremony", ceremonyMinimum: 5_000 },
+  { name: "RSA-2048", securityNote: "NIST maps RSA-2048 to about 112-bit security strength.", deadlineSeconds: 10 * 60, nextCeremony: "rsa3072Ceremony", ceremonyMinimum: 250_000 },
+  { name: "RSA-3072", securityNote: "NIST maps RSA-3072 to about 128-bit security strength.", deadlineSeconds: 15 * 60, nextCeremony: "rsa4096Ceremony", ceremonyMinimum: 10_000_000 },
+  { name: "RSA-4096", securityNote: "NIST estimates about 152-bit strength for RSA key establishment; the Q-Day countdown is fictional gameplay pressure.", deadlineSeconds: 20 * 60, nextCeremony: "pqcCeremony", ceremonyMinimum: 50_000_000 },
+  { name: "Hybrid / PQC", securityNote: "Post-quantum capable CA. Exact strength depends on the selected algorithm and parameters.", deadlineSeconds: null, nextCeremony: null, ceremonyMinimum: null },
+];
 
 export const BUILDINGS: Building[] = [
   {
@@ -170,9 +194,10 @@ export const UPGRADES: Upgrade[] = [
     id: "rsa2048",
     category: "general",
     name: "RSA-2048",
-    description: "Replace toy crypto with a respectable RSA CA.",
+    description: "Legacy upgrade retained for saves from the previous progression.",
     cost: 50,
     clickBonus: 1,
+    legacy: true,
   },
   {
     id: "longerKeys",
@@ -218,18 +243,25 @@ export const UPGRADES: Upgrade[] = [
     id: "hybridPqc",
     category: "general",
     name: "Hybrid PQC",
-    description: "Start issuing with classical + post-quantum protection.",
+    description: "Legacy upgrade retained for saves from the previous progression.",
     cost: 8_000_000,
     multiplier: 2.5,
+    legacy: true,
   },
   {
     id: "pqcMigration",
     category: "general",
     name: "PQC Migration",
-    description: "Migrate the CA hierarchy away from RSA.",
+    description: "Legacy upgrade retained for saves from the previous progression.",
     cost: 50_000_000,
     multiplier: 5,
+    legacy: true,
   },
+  { id: "rsa1024Ceremony", category: "general", name: "RSA-1024 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 100, ceremonyToLevel: 1 },
+  { id: "rsa2048Ceremony", category: "general", name: "RSA-2048 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 5_000, ceremonyToLevel: 2 },
+  { id: "rsa3072Ceremony", category: "general", name: "RSA-3072 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 250_000, ceremonyToLevel: 3 },
+  { id: "rsa4096Ceremony", category: "general", name: "RSA-4096 Key Signing Ceremony", description: "Sign a stronger CA key. The ceremony consumes your entire certificate reserve and its productivity multiplier lasts until your next ceremony.", cost: 10_000_000, ceremonyToLevel: 4 },
+  { id: "pqcCeremony", category: "general", name: "Hybrid / PQC Key Signing Ceremony", description: "Replace the RSA CA with a post-quantum capable CA. The ceremony consumes your entire certificate reserve and protects you from the Q-Day countdown.", cost: 50_000_000, ceremonyToLevel: 5 },
   {
     id: "operatorPayrise",
     category: "operator", tier: 1,
