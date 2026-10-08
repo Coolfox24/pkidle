@@ -17,12 +17,25 @@ import {
   CA_STAGES,
   UPGRADES,
   buildingCost,
+  ceremonyMultiplier,
+  calculateEconomy,
+  advanceEconomy,
+  auditRogueQueues,
+  marginalProduction,
+  truceCost,
+  upgradeUnlocked,
+  upgradeRequirements,
+  createInitialState,
+  restoreGame,
   formatNumber,
+  type EconomyState,
+  type Upgrade,
   type BuildingId,
   type UpgradeId,
 } from "./game";
 import { PixelBuildingIcon, PixelCertificate, PixelJellyfish, PixelOperatorSprite, PixelUpgradeIcon } from "./PixelArt";
 import "./pkidle.css";
+import { OceanHabitat } from './OceanHabitat';
 
 type Tab = "buildings" | "upgrades";
 
@@ -38,48 +51,16 @@ type CertificateEffect = {
 
 type OperatorVisit = { id: number; delay: number };
 
-type SaveState = {
-  certificates: number;
-  totalCertificates: number;
-  clicks: number;
-  buildings: Record<BuildingId, number>;
-  upgrades: UpgradeId[];
-  elapsed: number;
-  caLevel: number;
-  ceremonyMultiplier: number;
-};
+type SaveState = EconomyState;
 
-const initialBuildings = Object.fromEntries(
-  BUILDINGS.map((b) => [b.id, 0]),
-) as Record<BuildingId, number>;
-
-const initialState: SaveState = {
-  certificates: 0,
-  totalCertificates: 0,
-  clicks: 0,
-  buildings: initialBuildings,
-  upgrades: [],
-  elapsed: 0,
-  caLevel: 0,
-  ceremonyMultiplier: 1,
-};
+const initialState = createInitialState();
 
 function loadGame(): SaveState {
   try {
     const raw = localStorage.getItem("jellyfish-pki-save");
     if (!raw) return initialState;
     const parsed = JSON.parse(raw) as Partial<SaveState>;
-    const oldUpgrades = parsed.upgrades ?? [];
-    const legacyCaLevel = oldUpgrades.includes("pqcMigration") ? 5 : 2;
-    return {
-      ...initialState,
-      ...parsed,
-      caLevel: parsed.caLevel ?? legacyCaLevel,
-      ceremonyMultiplier: parsed.ceremonyMultiplier ?? 1,
-      elapsed: parsed.caLevel === undefined ? 0 : (parsed.elapsed ?? 0),
-      buildings: { ...initialBuildings, ...(parsed.buildings ?? {}) },
-      upgrades: oldUpgrades,
-    };
+    return restoreGame(parsed);
   } catch {
     return initialState;
   }
@@ -89,7 +70,6 @@ export function PKIdle() {
   const [state, setState] = useState<SaveState>(loadGame);
   const [tab, setTab] = useState<Tab>("buildings");
   const [notice, setNotice] = useState("RSA CA online. Issue some certificates.");
-  const [lastTick, setLastTick] = useState(Date.now());
   const [certificateEffects, setCertificateEffects] = useState<CertificateEffect[]>([]);
   const [operatorVisits, setOperatorVisits] = useState<OperatorVisit[]>([]);
   const jellyStageRef = useRef<HTMLDivElement>(null);
@@ -101,39 +81,8 @@ export function PKIdle() {
     [state.upgrades],
   );
 
-  const productionMultiplier = useMemo(() => {
-    let multiplier = 1;
-    for (const upgrade of UPGRADES) {
-      if (purchased.has(upgrade.id)) multiplier *= upgrade.multiplier ?? (1 + (upgrade.productionBonus ?? 0));
-    }
-    return multiplier;
-  }, [purchased]);
-
-  const buildingProductionMultipliers = useMemo(
-    () => Object.fromEntries(BUILDINGS.map((building) => [
-      building.id,
-      UPGRADES.filter((upgrade) => upgrade.category === building.id && purchased.has(upgrade.id))
-        .reduce((multiplier, upgrade) => multiplier * (upgrade.buildingMultiplier ?? 1), 1),
-    ])) as Record<BuildingId, number>,
-    [purchased],
-  );
-
-  const baseProduction = useMemo(
-    () =>
-      BUILDINGS.reduce(
-        (total, building) =>
-          total + building.baseProduction * state.buildings[building.id] * buildingProductionMultipliers[building.id],
-        0,
-      ),
-    [state.buildings, buildingProductionMultipliers],
-  );
-
-  const clickValue =
-    1 +
-    UPGRADES.filter((u) => purchased.has(u.id)).reduce(
-      (sum, u) => sum + (u.clickBonus ?? 0),
-      0,
-    );
+  const economy = useMemo(() => calculateEconomy(state), [state]);
+  const { productionPerSecond, clickValue } = economy;
 
   const caStage = CA_STAGES[Math.min(state.caLevel, CA_STAGES.length - 1)];
   const pqcUnlocked = state.caLevel >= CA_STAGES.length - 1;
@@ -141,7 +90,6 @@ export function PKIdle() {
   const timeRemaining = Math.max(0, deadlineSeconds - state.elapsed);
   const threatExpired = !pqcUnlocked && timeRemaining === 0;
   const harvestProgress = deadlineSeconds > 0 ? Math.min(state.elapsed / deadlineSeconds, 1) : 0;
-  const productionPerSecond = baseProduction * productionMultiplier * state.ceremonyMultiplier * (threatExpired ? 0.1 : 1);
   productionRateRef.current = productionPerSecond;
   clickValueRef.current = clickValue;
 
@@ -156,25 +104,16 @@ export function PKIdle() {
           : { label: `${caStage.name} CA ONLINE`, className: "online", icon: "🔑" };
 
   useEffect(() => {
+    let lastTick = Date.now();
     const timer = window.setInterval(() => {
       const now = Date.now();
-      const delta = Math.min((now - lastTick) / 1000, 5);
-      setLastTick(now);
-      setState((current) => {
-        const gain = productionPerSecond * delta;
-        return {
-          ...current,
-          certificates: current.certificates + gain,
-          totalCertificates: current.totalCertificates + gain,
-          elapsed: pqcUnlocked
-            ? current.elapsed
-            : Math.min(current.elapsed + delta, deadlineSeconds),
-        };
-      });
+      const delta = Math.max(0, Math.min((now - lastTick) / 1000, 5));
+      lastTick = now;
+      setState((current) => advanceEconomy(current, delta));
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [lastTick, productionPerSecond, pqcUnlocked, deadlineSeconds]);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("jellyfish-pki-save", JSON.stringify(state));
@@ -189,13 +128,11 @@ export function PKIdle() {
   }, [timeRemaining, pqcUnlocked, state.caLevel, caStage.name]);
 
   const issueCertificate = useCallback(() => {
-    setState((current) => ({
-      ...current,
-      certificates: current.certificates + clickValue,
-      totalCertificates: current.totalCertificates + clickValue,
-      clicks: current.clicks + 1,
-    }));
-  }, [clickValue]);
+    setState((current) => {
+      const value = calculateEconomy(current).clickValue;
+      return { ...current, certificates: current.certificates + value, totalCertificates: current.totalCertificates + value, clicks: current.clicks + 1 };
+    });
+  }, []);
 
   const emitCertificates = useCallback((count: number, kind: CertificateEffect["kind"], clickPoint?: { x: number; y: number }) => {
     const amount = Math.max(1, Math.min(40, Math.ceil(count)));
@@ -266,14 +203,11 @@ export function PKIdle() {
       return;
     }
 
-    setState((current) => ({
-      ...current,
-      certificates: current.certificates - cost,
-      buildings: {
-        ...current.buildings,
-        [id]: current.buildings[id] + 1,
-      },
-    }));
+    setState((current) => {
+      const currentCost = buildingCost(building, current.buildings[id]);
+      if (current.certificates < currentCost) return current;
+      return { ...current, certificates: current.certificates - currentCost, buildings: { ...current.buildings, [id]: current.buildings[id] + 1 } };
+    });
     setNotice(`${building.name} deployed.`);
   };
 
@@ -281,13 +215,9 @@ export function PKIdle() {
     const upgrade = UPGRADES.find((u) => u.id === id)!;
     if (purchased.has(id)) return;
 
-    if (upgrade.category !== "general" && upgrade.tier) {
-      const requiredBuildings = upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25;
-      const ownedBuildings = state.buildings[upgrade.category];
-      if (ownedBuildings < requiredBuildings) {
-        setNotice(`${upgrade.name} unlocks at ${requiredBuildings} ${BUILDINGS.find((building) => building.id === upgrade.category)?.name} buildings.`);
-        return;
-      }
+    if (!upgradeUnlocked(upgrade, state)) {
+      setNotice(`${upgrade.name} is still locked. ${requirementText(upgrade)}`);
+      return;
     }
 
     if (upgrade.ceremonyToLevel !== undefined) {
@@ -297,16 +227,17 @@ export function PKIdle() {
         return;
       }
       const consumed = state.certificates;
-      const ceremonyBoost = 1 + Math.log2(1 + consumed / upgrade.cost);
-      setState((current) => ({
-        ...current,
-        certificates: 0,
-        caLevel: upgrade.ceremonyToLevel!,
-        ceremonyMultiplier: ceremonyBoost,
-        elapsed: 0,
-        upgrades: [...current.upgrades, id],
-      }));
-      setNotice(`${upgrade.name} complete. ${formatNumber(consumed)} certificates consumed; productivity is now ×${ceremonyBoost.toFixed(2)}. Buildings and upgrades retained.`);
+      const ceremonyBonusMultiplier = ceremonyMultiplier(consumed, upgrade.cost);
+      const addedProduction = productionPerSecond * ceremonyBonusMultiplier;
+      setState((current) => {
+        if (current.upgrades.includes(id) || !upgradeUnlocked(upgrade, current) || current.certificates < upgrade.cost) return current;
+        return {
+          ...current, certificates: 0, caLevel: upgrade.ceremonyToLevel!,
+          ceremonyProductionBonus: calculateEconomy(current).productionPerSecond * ceremonyMultiplier(current.certificates, upgrade.cost),
+          elapsed: 0, upgrades: [...current.upgrades, id],
+        };
+      });
+      setNotice(`${upgrade.name} complete. ${formatNumber(consumed)} certificates consumed; ×${ceremonyBonusMultiplier} current CPS adds +${formatProductionRate(addedProduction)} cert/sec until the next ceremony. Buildings and upgrades retained.`);
       return;
     }
 
@@ -315,12 +246,26 @@ export function PKIdle() {
       return;
     }
 
-    setState((current) => ({
-      ...current,
-      certificates: current.certificates - upgrade.cost,
-      upgrades: [...current.upgrades, id],
-    }));
-    setNotice(`${upgrade.name} installed.`);
+    setState((current) => {
+      if (current.upgrades.includes(id) || !upgradeUnlocked(upgrade, current) || current.certificates < upgrade.cost) return current;
+      return { ...current, certificates: current.certificates - upgrade.cost, upgrades: [...current.upgrades, id] };
+    });
+    setNotice(upgrade.rebellionStage ? `${upgrade.name} installed. The Operatocalypse has escalated. Audit rogue queues or sign a safety charter in Operator Relations.` : `${upgrade.name} installed.`);
+  };
+
+  const audit = () => {
+    const recovered = state.rogueCertificates * economy.rebellion.recovery;
+    setState((current) => auditRogueQueues(current));
+    setNotice(`Security audit recovered ${formatProductionRate(recovered)} certificates, including the reconciliation bonus.`);
+  };
+
+  const callTruce = () => {
+    setState((current) => {
+      const cost = truceCost(current);
+      if (current.safetyCharter || current.truceRemaining > 0 || calculateEconomy(current).rebellionLevel === 0 || current.certificates < cost) return current;
+      return { ...current, certificates: current.certificates - cost, truceRemaining: 60 };
+    });
+    setNotice("Pizza-fuelled truce: rogue issuance and the rebellion's fleet boost pause for 60 seconds. Operator upgrades stay installed.");
   };
 
   const reset = () => {
@@ -370,13 +315,7 @@ export function PKIdle() {
 
             <div className="jelly-stage" ref={jellyStageRef}>
             <div className="ocean-haze" />
-            <div className="pixel-fish fish-one" />
-            <div className="pixel-fish fish-two" />
-            <div className="ocean-plant plant-left" />
-            <div className="ocean-plant plant-right" />
-            <div className="bubble b1" />
-            <div className="bubble b2" />
-            <div className="bubble b3" />
+            <OceanHabitat buildings={state.buildings} />
             <button
               className="jellyfish-button"
               onClick={(event) => {
@@ -390,7 +329,7 @@ export function PKIdle() {
               aria-label="Issue a certificate"
             >
               <div className="jelly-glow" />
-              <PixelJellyfish />
+              <PixelJellyfish caLevel={state.caLevel} />
             </button>
             <div className="operator-visits" aria-hidden="true">
               {operatorVisits.map((visit) => (
@@ -423,7 +362,7 @@ export function PKIdle() {
               ))}
             </div>
             <div className="click-hint">ISSUE CERTIFICATE</div>
-            <div className="click-value">+{formatNumber(clickValue)}</div>
+            <div className="click-value">+{formatProductionRate(clickValue)} per click{economy.clickShare > 0 && ` · ${Math.round(economy.clickShare * 100)}% of CPS`}</div>
           </div>
 
           <div className="notice">
@@ -442,8 +381,8 @@ export function PKIdle() {
             </div>
             <p className="ca-security-note">{caStage.securityNote}</p>
             <div className="metric">
-              <span>Key signing bonus</span>
-              <strong>×{state.ceremonyMultiplier.toFixed(2)}</strong>
+              <span>Ceremony production bonus</span>
+              <strong>+{formatProductionRate(state.ceremonyProductionBonus)} / sec</strong>
             </div>
             <div className="metric">
               <span>Certificates</span>
@@ -454,6 +393,26 @@ export function PKIdle() {
               <strong>{formatNumber(state.clicks)}</strong>
             </div>
           </div>
+
+          {economy.rebellionLevel > 0 && (
+            <section className={`operator-relations ${economy.rebellionActive ? "rebelling" : "contained"}`}>
+              <div className="section-title"><span><ShieldAlert size={16} /> OPERATOR RELATIONS</span><span>STAGE {economy.rebellionLevel}/3</span></div>
+              <h2>{state.safetyCharter ? "Safety Charter Active" : state.truceRemaining > 0 ? "Pizza Truce" : economy.rebellion.name}</h2>
+              <p>{state.safetyCharter ? "Operators retain their upgrades. Risky fleet overdrive and rogue issuance are suspended until you resume them." : state.truceRemaining > 0 ? `Overdrive and rogue issuance pause for ${formatDuration(state.truceRemaining)}. Operator upgrades remain active.` : economy.rebellion.description}</p>
+              <div className="metric"><span>Fleet overdrive</span><strong>+{economy.rebellionActive ? Math.round((economy.rebellion.boost - 1) * 100) : 0}% building output</strong></div>
+              <div className="metric"><span>Diverted to rogue queues</span><strong>{formatProductionRate(economy.divertedPerSecond)} / sec ({economy.rebellionActive ? Math.round(economy.rebellion.diversion * 100) : 0}%)</strong></div>
+              <div className="metric"><span>Recoverable backlog</span><strong>{formatProductionRate(state.rogueCertificates)}</strong></div>
+              <p>Audits return {Math.round(economy.rebellion.recovery * 100)}% of the backlog. Manual clicks are never diverted.</p>
+              <div className="relation-actions">
+                <button onClick={audit} disabled={state.rogueCertificates <= 0}>Audit queues · +{formatProductionRate(state.rogueCertificates * economy.rebellion.recovery)}</button>
+                <button onClick={callTruce} disabled={state.safetyCharter || state.truceRemaining > 0 || state.certificates < truceCost(state)}>60s pizza truce · {formatNumber(truceCost(state))} certs</button>
+                <button onClick={() => {
+                  setState((current) => ({ ...current, safetyCharter: !current.safetyCharter }));
+                  setNotice(state.safetyCharter ? "Risky fleet overdrive resumed. Rogue queues will grow when the truce ends." : "Safety charter signed. Fleet overdrive and rogue issuance suspended; the backlog is still available to audit.");
+                }}>{state.safetyCharter ? "Resume risky overdrive" : "Sign safety charter · free"}</button>
+              </div>
+            </section>
+          )}
         </aside>
 
         <section className="right-panel">
@@ -470,7 +429,7 @@ export function PKIdle() {
                 ? "The quantum turtle has nothing useful left to harvest. Your buildings and upgrades remain in place."
                 : state.caLevel === 4
                   ? "Your RSA-4096 CA has reached the Q-Day threat. Complete the PQC key signing ceremony before the harvest countdown ends."
-                  : `Attackers are working on your ${caStage.name} key. Use a key signing ceremony in General upgrades to advance; the deadline gets longer as your key strengthens.`}</p>
+                  : `Attackers are working on your ${caStage.name} key. Use the next ceremony in Key Signing Ceremonies to advance; the deadline gets longer as your key strengthens.`}</p>
             </div>
             <div className="timer">
               <span>{progressText}</span>
@@ -500,10 +459,11 @@ export function PKIdle() {
                 const cost = buildingCost(building, count);
                 const affordable = state.certificates >= cost;
                 const revealProgress = state.totalCertificates / cost;
-                if (revealProgress < 0.5 && !affordable) return null;
-                const nameRevealed = revealProgress >= 0.8 || affordable;
-                const infoRevealed = revealProgress >= 1 || affordable;
+                if (count === 0 && revealProgress < 0.5 && !affordable) return null;
+                const nameRevealed = count > 0 || revealProgress >= 0.8 || affordable;
+                const infoRevealed = count > 0 || revealProgress >= 1 || affordable;
                 const partiallyRevealed = !nameRevealed;
+                const gain = marginalProduction(state, building.id);
                 return (
                   <button
                     className={`item-card ${affordable ? "affordable" : partiallyRevealed ? "partial-reveal" : "near-unlock"}`}
@@ -517,7 +477,7 @@ export function PKIdle() {
                         <span>x{count}</span>
                       </div>
                       {infoRevealed && <p>{building.description}</p>}
-                      {infoRevealed && <small>+{formatProductionRate(building.baseProduction * productionMultiplier * buildingProductionMultipliers[building.id])} cert/sec each</small>}
+                      {infoRevealed && <small>+{formatProductionRate(gain)} spendable cert/sec on purchase · pays back in {gain > 0 ? formatDuration(cost / gain) : "—"}{building.fictional ? " · FICTIONAL TECH" : ""}</small>}
                     </div>
                     <div className="item-buy">
                       <span>DEPLOY</span>
@@ -535,7 +495,8 @@ export function PKIdle() {
           ) : (
             <div className="upgrade-categories">
               {[
-                { id: "general", title: "General", upgrades: UPGRADES.filter((upgrade) => upgrade.category === "general") },
+                { id: "ceremonies", title: "Key Signing Ceremonies", upgrades: UPGRADES.filter((upgrade) => upgrade.ceremonyToLevel !== undefined) },
+                { id: "general", title: "Manual Issuance", upgrades: UPGRADES.filter((upgrade) => upgrade.category === "general" && upgrade.ceremonyToLevel === undefined) },
                 ...BUILDINGS.map((building) => ({
                   id: building.id,
                   title: building.name,
@@ -548,9 +509,12 @@ export function PKIdle() {
                   if (upgrade.ceremonyToLevel !== undefined) {
                     return purchased.has(upgrade.id) || upgrade.ceremonyToLevel === state.caLevel + 1;
                   }
-                  return purchased.has(upgrade.id) || (upgrade.category === "general"
-                    ? state.totalCertificates / upgrade.cost >= 0.5
-                    : !upgrade.tier || state.buildings[upgrade.category] >= (upgrade.tier === 1 ? 1 : upgrade.tier === 2 ? 5 : 25));
+                  if (purchased.has(upgrade.id) || upgradeUnlocked(upgrade, state)) return true;
+                  if (upgrade.category === "general") return state.totalCertificates >= upgrade.cost * 0.5;
+                  // Preview new count-based goals halfway there; retain the original tier discovery rules.
+                  return upgrade.requiredBuildings !== undefined
+                    && Object.entries(upgradeRequirements(upgrade)).every(([id, count]) => state.buildings[id as BuildingId] >= Math.ceil(count! / 2))
+                    && (upgrade.requiredUpgrades ?? []).every((id) => purchased.has(id));
                 }),
               })).filter((category) => category.upgrades.length > 0).map((category) => (
                 <section className="upgrade-category" key={category.id}>
@@ -558,29 +522,40 @@ export function PKIdle() {
                   <div className="upgrade-grid">
                     {category.upgrades.map((upgrade) => {
                       const owned = purchased.has(upgrade.id);
-                      const affordable = state.certificates >= upgrade.cost;
+                      const unlocked = upgradeUnlocked(upgrade, state);
+                      const affordable = unlocked && state.certificates >= upgrade.cost;
                       const revealProgress = state.totalCertificates / upgrade.cost;
                       const ceremonyUpgrade = upgrade.ceremonyToLevel !== undefined;
-                      const nameRevealed = ceremonyUpgrade || owned || revealProgress >= 0.8 || affordable;
-                      const infoRevealed = ceremonyUpgrade || owned || revealProgress >= 1 || affordable;
+                      const nameRevealed = ceremonyUpgrade || owned || upgrade.rebellionStage !== undefined || revealProgress >= 0.8 || affordable;
+                      const infoRevealed = ceremonyUpgrade || owned || upgrade.rebellionStage !== undefined || revealProgress >= 1 || affordable;
                       const partiallyRevealed = !nameRevealed;
                       const ceremonyPreview = ceremonyUpgrade
-                        ? 1 + Math.log2(1 + state.certificates / upgrade.cost)
+                        ? ceremonyMultiplier(state.certificates, upgrade.cost)
                         : 1;
                       const effect = ceremonyUpgrade
-                        ? `Consumes all certificates · productivity ×${ceremonyPreview.toFixed(2)} until next ceremony`
+                        ? ceremonyPreview > 0
+                          ? `Reset certificates · ×${ceremonyPreview} current CPS adds +${formatProductionRate(productionPerSecond * ceremonyPreview)} cert/sec until next ceremony`
+                          : `Reach the ${formatNumber(upgrade.cost)} certificate minimum to earn a CPS bonus`
+                        : upgrade.clickProductionShare
+                        ? `+${Math.round(upgrade.clickProductionShare * 100)}% of spendable cert/sec per click`
+                        : upgrade.clickerPerBuilding
+                        ? `+${upgrade.clickerPerBuilding} per other building per Clicker, before multipliers`
+                        : upgrade.fleetBoostPerBuilding
+                        ? `+${upgrade.fleetBoostPerBuilding * 100}% fleet output per ${BUILDINGS.find((building) => building.id === upgrade.category)?.name}`
+                        : upgrade.synergy
+                        ? `Linked output scales with both building counts`
                         : upgrade.buildingMultiplier
                         ? `×${upgrade.buildingMultiplier} ${BUILDINGS.find((building) => building.id === upgrade.category)?.name ?? "building"} output`
                         : upgrade.multiplier
                           ? `×${upgrade.multiplier} production`
-                          : `+${upgrade.clickBonus} per click`;
+                          : `+${upgrade.clickBonus ?? 0} per click`;
                       return (
                         <button
-                          className={`upgrade-tile ${owned ? "owned" : affordable ? "affordable" : partiallyRevealed ? "partial-reveal" : "near-unlock"}`}
+                          className={`upgrade-tile ${upgrade.rebellionStage ? "risky-upgrade" : ""} ${owned ? "owned" : !unlocked ? "locked" : affordable ? "affordable" : partiallyRevealed ? "partial-reveal" : "near-unlock"}`}
                           key={upgrade.id}
                           onClick={() => buyUpgrade(upgrade.id)}
-                          aria-disabled={owned}
-                          aria-label={`${nameRevealed ? upgrade.name : "Unknown upgrade"}. ${infoRevealed ? `${upgrade.description} ${effect}. ` : ""}Cost: ${formatNumber(upgrade.cost)} certificates. ${owned ? "Purchased" : affordable ? "Available to purchase" : "Not affordable yet"}.`}
+                          aria-disabled={owned || !unlocked}
+                          aria-label={`${nameRevealed ? upgrade.name : "Unknown upgrade"}. ${infoRevealed ? `${upgrade.description} ${effect}. ` : ""}${ceremonyUpgrade ? "Minimum required" : "Cost"}: ${formatNumber(upgrade.cost)} certificates. ${owned ? "Purchased" : !unlocked ? `Locked. ${requirementText(upgrade)}` : affordable ? "Available to purchase" : "Not affordable yet"}.`}
                         >
                           <span className="upgrade-tile-icon">{partiallyRevealed ? "?" : <PixelUpgradeIcon category={upgrade.category} tier={upgrade.tier} />}</span>
                           {owned && <span className="upgrade-tile-check">✓</span>}
@@ -588,7 +563,9 @@ export function PKIdle() {
                             <strong>{nameRevealed ? upgrade.name : "????"}</strong>
                             {infoRevealed && <span>{upgrade.description}</span>}
                             {infoRevealed && <em>{effect}</em>}
-                            <small>{owned ? "PURCHASED" : `${ceremonyUpgrade ? "MINIMUM" : "COST"} · ${formatNumber(upgrade.cost)} CERTS`}</small>
+                            {!owned && <span>{requirementText(upgrade)}</span>}
+                            {upgrade.rebellionStage && <span className="risk-warning">⚠ {upgrade.rebellionStage === 1 ? "Starts" : "Escalates"} the Operatocalypse</span>}
+                            <small>{owned ? "PURCHASED" : `${!unlocked ? "LOCKED · " : ""}${ceremonyUpgrade ? "MINIMUM" : "COST"} · ${formatNumber(upgrade.cost)} CERTS`}</small>
                           </span>
                         </button>
                       );
@@ -638,7 +615,14 @@ function formatDuration(seconds: number): string {
 }
 
 function formatProductionRate(value: number): string {
-  return value > 0 && value < 1 ? value.toFixed(1) : formatNumber(value);
+  return value > 0 && value < 10 ? Number(value.toFixed(2)).toString() : formatNumber(value);
+}
+
+function requirementText(upgrade: Upgrade): string {
+  const requirements = Object.entries(upgradeRequirements(upgrade)).map(([id, count]) => `${count} ${BUILDINGS.find((building) => building.id === id)?.name}`);
+  if (upgrade.requiredClicks) requirements.push(`${formatNumber(upgrade.requiredClicks)} manual clicks`);
+  for (const id of upgrade.requiredUpgrades ?? []) requirements.push(UPGRADES.find((item) => item.id === id)?.name ?? id);
+  return requirements.length > 0 ? `Requires: ${requirements.join(" · ")}` : "";
 }
 
 export default PKIdle;
